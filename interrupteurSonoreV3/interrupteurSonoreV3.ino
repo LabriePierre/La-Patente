@@ -4,8 +4,8 @@
 //version pour nano
 /* Programmation des paramètres avec Blexar:
 1. Connecter le bluetooth nommé Blexar
-2. Envoyer la commande P50e10 pour obternir les paramètres courrants
-3. Envoyer la commande P30e[valeur] 1 à 30 minutes de délais d'esxtinction
+2. Envoyer la commande P50e10 pour obtenir les paramètres courants
+3. Envoyer la commande P30e[valeur] 1 à 30 minutes de délais d'extinction
 4. Envoyer la commande P40e[valeur] 60, très sensible à 90, peu sensible, pour la sensibilité en DB de capture du son
 5. l'écran affichera les valeurs sélectionnées après l'affichage de 1111
 */
