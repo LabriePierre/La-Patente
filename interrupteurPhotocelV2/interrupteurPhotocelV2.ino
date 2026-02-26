@@ -6,20 +6,30 @@
 
 #define RELAIS_PIN 0 // digital pin 0 pour relais ESP-01
 #define SIGNAL_PIN 2 // digital pin pour capteur photocell
-
+//Defini le niveau de debug >5
+#define DLEVEL 6
 
 
 long timer;
 
-long delaisExtinction = 30000;  //30 secondes en milli-secondes
+long delaisExtinction = 20000;  //30 secondes en milli-secondes
 long heureOuverture; //début de compte
 bool relais_1; //indique le relais fermé
+unsigned long measurement_timestamp = 0;
+unsigned long intervalleMesure = 3600000;  // une heure en millisecondes
 
 
 void setup() {
   digitalWrite(RELAIS_PIN, HIGH);
   pinMode(RELAIS_PIN, OUTPUT);
   pinMode(SIGNAL_PIN, INPUT_PULLUP);
+
+  #if DLEVEL > 5
+  // start the serial connection
+  Serial.begin(115200);
+
+  Serial.setDebugOutput(true);
+#endif
 
   WiFi.mode(WIFI_OFF); // fermeture du Wifi non requis
 }
@@ -41,6 +51,8 @@ void loop() {
     relais_1 = false;
     digitalWrite(RELAIS_PIN, HIGH);
   }
+
+  faireReboot();
 }
 
 
@@ -91,4 +103,27 @@ boolean verifieChangeLumiere() {
   }
 
   return false;
+}
+
+
+// à toutes les heures met à jour la valeur de l'heure d'ouverture pour vérifier la bonne connexion WiFi
+void faireReboot() {
+ 
+  /* Faire un reboot à toutes les les 60 minutes. */
+  if ((millis() - measurement_timestamp) >= intervalleMesure) {
+
+  _faireReboot();
+    measurement_timestamp = millis();
+  }
+}
+
+void _faireReboot() {
+
+#if DLEVEL > 5
+    Serial.println(" on fait un reboot ");
+#endif
+    //trace de l'appel
+    delay(1000);
+    ESP.restart();
+  
 }
