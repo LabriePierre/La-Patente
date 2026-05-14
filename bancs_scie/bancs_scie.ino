@@ -10,7 +10,8 @@
 #define LED_A 9
 #define LED_B 10
 #define SENSEUR_COURANT A0
-#define DEBUG true
+// décommenter pour affichage DEBUG
+//#define DEBUG true
 
 
 // ─── Paramètres de mesure ────────────────────────────────────────────────────
@@ -27,12 +28,8 @@ bool relais_B = false;
 uint32_t readStopTime = 0;     // 0 = minuterie inactive
 float baselineCourant = 0.0f;  // Courant au repos mesuré juste avant le relais
 bool baselinePris = false;
-
-// pour chase light indicateur démarrage manuel
-const uint16_t INTERVALLE_LED = 200;  // ms — modifie pour changer la vitesse
-uint32_t dernierClignotement = 0;
-bool etatLED = false;
-
+bool alerteCourant_A = false;  //alerte en cas de courant excessif
+bool alerteCourant_B = false;
 
 // ─── Setup ───────────────────────────────────────────────────────────────────
 void setup() {
@@ -48,19 +45,30 @@ void setup() {
   pinMode(PIN_ON_A, INPUT_PULLUP);
   pinMode(PIN_ON_B, INPUT_PULLUP);
 
+  pinMode(LED_A, OUTPUT);
+  pinMode(LED_B, OUTPUT);
+  digitalWrite(LED_A, LOW);
+  digitalWrite(LED_B, LOW);
+
   delay(500);
   Serial.println(F("Setup OK"));
 }
 
 // ─── Loop ────────────────────────────────────────────────────────────────────
 void loop() {
-  // Les pins INPUT_PULLUP sont LOW quand enfoncées → on inverse pour lisibilité
-  bool pin_A = digitalRead(PIN_ON_A);  // true = bouton pressé
+  // Les pins INPUT_PULLUP sont HIGH quand sélectionnés via la borne NC des contacteurs
+  bool pin_A = digitalRead(PIN_ON_A);  // true =  contacteur activé
   bool pin_B = digitalRead(PIN_ON_B);
 
-  // Déverrouillage automatique quand le bouton est relâché
-  if (!pin_A) verrou_A = false;
-  if (!pin_B) verrou_B = false;
+  // Déverrouillage automatique quand l'interrupteur DPDT passe au neutre
+  if (!pin_A) {
+    verrou_A = false;
+    alerteCourant_A = false;
+  }
+  if (!pin_B) {
+    verrou_B = false;
+    alerteCourant_B = false;
+  }
 
   // ── Logique de sélection de direction ──────────────────────────────────────
   if (pin_A && !pin_B && !verrou_A) {
@@ -68,16 +76,16 @@ void loop() {
       capturerBaseline();  // ← une seule fois par cycle
       baselinePris = true;
     }
+
     if (!courantDetecte()) {
       setRelais(true, false);
-      setLED(true, false);
       demarreMinuterie();
     } else {
       verrou_A = true;
+      //faire clignoter les LEDs
+      alerteCourant_A = true;
       setRelais(false, false);
       baselinePris = false;
-      //faire clignoter les LED
-      clignoteLED(true, true);
       Serial.println(F("Verrou A — surcourant"));
     }
 
@@ -86,24 +94,22 @@ void loop() {
       capturerBaseline();  // ← une seule fois par cycle
       baselinePris = true;
     }
+
     if (!courantDetecte()) {
       setRelais(false, true);
-      setLED(false, true);
       demarreMinuterie();
     } else {
       verrou_B = true;
+      //faire clignoter les LED
+      alerteCourant_B = true;  // ← alerte
       setRelais(false, false);
       baselinePris = false;
-      setLED(false, false);
-      //faire clignoter les LED
-      clignoteLED(true, true);
       Serial.println(F("Verrou B — surcourant"));
     }
 
   } else {
     // Pin inactive OU verrou actif → relais ouverts
     setRelais(false, false);
-    setLED(false, false);
   }
 
   // ── Minuterie de sécurité : coupe les relais après STOP_MILLIS ─────────────
@@ -114,6 +120,9 @@ void loop() {
     baselinePris = false;
     Serial.println(F("Minuterie — relais coupés"));
   }
+
+  // ----- mise à jour des LED ---------------
+  majLEDs();
 
   // Pas de delay() ici : la mesure de courant (1 s) constitue déjà la temporisation.
   // Si la mesure n'est pas déclenchée, 50 ms suffisent pour la réactivité.
@@ -129,19 +138,34 @@ void setRelais(bool a, bool b) {
   digitalWrite(RELAIS_B, b ? HIGH : LOW);
 }
 
-void setLED(bool a, bool b) {
-
-  digitalWrite(LED_A, a ? HIGH : LOW);
-  digitalWrite(LED_B, b ? HIGH : LOW);
-}
-void clignoteLED(bool a, bool b) {
+// ─── Pilotage des LED ──────────────────────────────────────────────────────
+// Clignotement lent = relais actif
+// Clignotement rapide = blocage dde la vanne
+// LED fixe = en fonction
+// LED éteinte = repos
+void majLEDs() {
+  static uint32_t dernierClignotement = 0;  // ← static local uniquement
+  static bool etatLED = false;              // ← static local uniquement
   uint32_t maintenant = millis();
 
-  if (maintenant - dernierClignotement >= INTERVALLE_LED) {
+  uint16_t intervalle = alerteCourant_A || alerteCourant_B ? 100 : 500;
+
+  if (maintenant - dernierClignotement >= intervalle) {
     dernierClignotement = maintenant;
     etatLED = !etatLED;
-    digitalWrite(LED_A, etatLED);
-    digitalWrite(LED_B, etatLED);
+  }
+
+  if (alerteCourant_A || alerteCourant_B) {
+    digitalWrite(LED_A, alerteCourant_A ? etatLED : LOW);  // ← LED A seule si faute A
+    digitalWrite(LED_B, alerteCourant_B ? etatLED : LOW);  // ← LED B seule si faute B
+  } else {
+    if (verrou_A) digitalWrite(LED_A, HIGH);
+    else if (relais_A) digitalWrite(LED_A, etatLED);
+    else digitalWrite(LED_A, LOW);
+
+    if (verrou_B) digitalWrite(LED_B, HIGH);
+    else if (relais_B) digitalWrite(LED_B, etatLED);
+    else digitalWrite(LED_B, LOW);
   }
 }
 // ─── Minuterie ────────────────────────────────────────────────────────────────
@@ -177,41 +201,6 @@ uint16_t mesurePeak() {
 // ─── Détection de surcourant ──────────────────────────────────────────────────
 // Moyenne les pics ADC sur MESURE_DUREE_MS, calcule le courant réel et
 // compare à LIMITE_COURANT. Retourne true si le courant est trop élevé.
-bool courantDetecte_old() {
-  float vcc_mV = (float)lireVCC_mV();  // ex. 5012 mV
-  float vcc = vcc_mV / 1000.0f;        // en Volts
-
-  uint32_t somme = 0;
-  uint32_t count = 0;
-  uint32_t debut = millis();
-
-  while (millis() - debut < MESURE_DUREE_MS) {
-    somme += mesurePeak();
-    count++;
-  }
-
-  if (count == 0) return false;  // garde-fou
-
-  float adcMoyen = (float)somme / count;
-  float tension = adcMoyen * (vcc / 1023.0f);  // Volts
-  float repos = vcc / 2.0f;                    // Point zéro ACS712
-  float courant = (tension - repos) / 0.185;   // 0.185 V/A pour ACS712-5A
-
-#ifdef DEBUG
-  Serial.print(F("VCC: "));
-  Serial.print(vcc, 3);
-  Serial.print(F("V  Tension: "));
-  Serial.print(tension, 3);
-  Serial.print(F("V  Courant: "));
-  Serial.print(courant, 3);
-  Serial.println(F(" A"));
-#endif
-  //première lecture
-
-  return (fabsf(courant) > LIMITE_COURANT);
-}
-// ─── Remplacer courantDetecte() par deux fonctions ────────────────────────
-
 // 1. Capture le repos AVANT d'enclencher le relais (appel unique)
 void capturerBaseline() {
   float vcc = lireVCC_mV() / 1000.0f;
@@ -235,6 +224,7 @@ bool courantDetecte() {
   uint32_t somme = 0, count = 0;
   uint32_t debut = millis();
 
+
   while (millis() - debut < MESURE_DUREE_MS) {
     somme += mesurePeak();
     count++;
@@ -248,6 +238,7 @@ bool courantDetecte() {
   float courant = (tension - repos) / 0.185f;
 
   float deviation = fabsf(courant - baselineCourant);  // ← différentiel
+
 #ifdef DEBUG
   Serial.print(F("Baseline: "));
   Serial.print(baselineCourant, 3);
