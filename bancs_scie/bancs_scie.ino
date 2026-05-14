@@ -14,19 +14,25 @@
 
 
 // ─── Paramètres de mesure ────────────────────────────────────────────────────
-const float LIMITE_COURANT = 0.35;       // Ampères — seuil de déclenchement
-const uint16_t SAMPLE_WINDOW_MS = 15;   // Fenêtre d'un échantillon peak (ms)
+const float LIMITE_COURANT = 0.35;     // Ampères — seuil de déclenchement
+const uint16_t SAMPLE_WINDOW_MS = 15;  // Fenêtre d'un échantillon peak (ms)
 const uint16_t MESURE_DUREE_MS = 500;  // Durée totale de mesure (ms)
-const uint32_t STOP_MILLIS = 10000UL;   // Durée max des relais (ms)
+const uint32_t STOP_MILLIS = 10000UL;  // Durée max des relais (ms)
 
 // ─── État global minimal ─────────────────────────────────────────────────────
 bool verrou_A = false;
 bool verrou_B = false;
 bool relais_A = false;
 bool relais_B = false;
-uint32_t readStopTime = 0;  // 0 = minuterie inactive
-float baselineCourant = 0.0f; // Courant au repos mesuré juste avant le relais
+uint32_t readStopTime = 0;     // 0 = minuterie inactive
+float baselineCourant = 0.0f;  // Courant au repos mesuré juste avant le relais
 bool baselinePris = false;
+
+// pour chase light indicateur démarrage manuel
+const uint16_t INTERVALLE_LED = 200;  // ms — modifie pour changer la vitesse
+uint32_t dernierClignotement = 0;
+bool etatLED = false;
+
 
 // ─── Setup ───────────────────────────────────────────────────────────────────
 void setup() {
@@ -49,8 +55,8 @@ void setup() {
 // ─── Loop ────────────────────────────────────────────────────────────────────
 void loop() {
   // Les pins INPUT_PULLUP sont LOW quand enfoncées → on inverse pour lisibilité
-  bool pin_A = !digitalRead(PIN_ON_A);  // true = bouton pressé
-  bool pin_B = !digitalRead(PIN_ON_B);
+  bool pin_A = digitalRead(PIN_ON_A);  // true = bouton pressé
+  bool pin_B = digitalRead(PIN_ON_B);
 
   // Déverrouillage automatique quand le bouton est relâché
   if (!pin_A) verrou_A = false;
@@ -58,10 +64,10 @@ void loop() {
 
   // ── Logique de sélection de direction ──────────────────────────────────────
   if (pin_A && !pin_B && !verrou_A) {
-      if (!baselinePris) {
-      capturerBaseline();        // ← une seule fois par cycle
+    if (!baselinePris) {
+      capturerBaseline();  // ← une seule fois par cycle
       baselinePris = true;
-    }  
+    }
     if (!courantDetecte()) {
       setRelais(true, false);
       setLED(true, false);
@@ -69,16 +75,17 @@ void loop() {
     } else {
       verrou_A = true;
       setRelais(false, false);
-       baselinePris = false;
-       setLED(false, false);
+      baselinePris = false;
+      //faire clignoter les LED
+      clignoteLED(true, true);
       Serial.println(F("Verrou A — surcourant"));
     }
 
   } else if (pin_B && !pin_A && !verrou_B) {
-      if (!baselinePris) {
-      capturerBaseline();        // ← une seule fois par cycle
+    if (!baselinePris) {
+      capturerBaseline();  // ← une seule fois par cycle
       baselinePris = true;
-    }  
+    }
     if (!courantDetecte()) {
       setRelais(false, true);
       setLED(false, true);
@@ -86,8 +93,10 @@ void loop() {
     } else {
       verrou_B = true;
       setRelais(false, false);
-       baselinePris = false;
+      baselinePris = false;
       setLED(false, false);
+      //faire clignoter les LED
+      clignoteLED(true, true);
       Serial.println(F("Verrou B — surcourant"));
     }
 
@@ -102,7 +111,7 @@ void loop() {
     if (relais_A) verrou_A = true;
     if (relais_B) verrou_B = true;
     setRelais(false, false);
-     baselinePris = false;
+    baselinePris = false;
     Serial.println(F("Minuterie — relais coupés"));
   }
 
@@ -125,7 +134,16 @@ void setLED(bool a, bool b) {
   digitalWrite(LED_A, a ? HIGH : LOW);
   digitalWrite(LED_B, b ? HIGH : LOW);
 }
+void clignoteLED(bool a, bool b) {
+  uint32_t maintenant = millis();
 
+  if (maintenant - dernierClignotement >= INTERVALLE_LED) {
+    dernierClignotement = maintenant;
+    etatLED = !etatLED;
+    digitalWrite(LED_A, etatLED);
+    digitalWrite(LED_B, etatLED);
+  }
+}
 // ─── Minuterie ────────────────────────────────────────────────────────────────
 void demarreMinuterie() {
   // Ne démarre que si aucun relais n'était déjà actif (premier appel)
@@ -196,24 +214,24 @@ bool courantDetecte_old() {
 
 // 1. Capture le repos AVANT d'enclencher le relais (appel unique)
 void capturerBaseline() {
-  float vcc  = lireVCC_mV() / 1000.0f;
+  float vcc = lireVCC_mV() / 1000.0f;
   uint32_t somme = 0, count = 0;
   uint32_t debut = millis();
 
-  while (millis() - debut < 200) {   // 200 ms suffisent pour le repos
+  while (millis() - debut < 200) {  // 200 ms suffisent pour le repos
     somme += mesurePeak();
     count++;
   }
 
   float adcMoyen = (float)somme / count;
-  float tension  = adcMoyen * (vcc / 1023.0f);
-  float repos    = vcc / 2.0f;
+  float tension = adcMoyen * (vcc / 1023.0f);
+  float repos = vcc / 2.0f;
   baselineCourant = (tension - repos) / 0.185f;  // courant "zéro" réel
 }
 
 // 2. Mesure l'écart par rapport à la baseline
 bool courantDetecte() {
-  float vcc  = lireVCC_mV() / 1000.0f;
+  float vcc = lireVCC_mV() / 1000.0f;
   uint32_t somme = 0, count = 0;
   uint32_t debut = millis();
 
@@ -225,20 +243,22 @@ bool courantDetecte() {
   if (count == 0) return false;
 
   float adcMoyen = (float)somme / count;
-  float tension  = adcMoyen * (vcc / 1023.0f);
-  float repos    = vcc / 2.0f;
-  float courant  = (tension - repos) / 0.185f;
+  float tension = adcMoyen * (vcc / 1023.0f);
+  float repos = vcc / 2.0f;
+  float courant = (tension - repos) / 0.185f;
 
-  float deviation = fabsf(courant - baselineCourant); // ← différentiel
+  float deviation = fabsf(courant - baselineCourant);  // ← différentiel
 #ifdef DEBUG
-  Serial.print(F("Baseline: ")); Serial.print(baselineCourant, 3);
-  Serial.print(F(" A  Courant: ")); Serial.print(courant, 3);
-  Serial.print(F(" A  Déviation: ")); Serial.print(deviation, 3);
+  Serial.print(F("Baseline: "));
+  Serial.print(baselineCourant, 3);
+  Serial.print(F(" A  Courant: "));
+  Serial.print(courant, 3);
+  Serial.print(F(" A  Déviation: "));
+  Serial.print(deviation, 3);
   Serial.println(F(" A"));
 #endif
 
   return (deviation > LIMITE_COURANT);
-
 }
 
 // ─── Lecture VCC réel via référence interne 1.1 V ────────────────────────────
