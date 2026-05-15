@@ -195,7 +195,7 @@ uint16_t mesurePeak() {
     uint16_t s = analogRead(SENSEUR_COURANT);
     if (s > peakVal) peakVal = s;
   }
-  return peakVal;  // toujours 0–1023, pas besoin de isinf()
+  return peakVal;  // toujours 0–1023
 }
 
 // ─── Détection de surcourant ──────────────────────────────────────────────────
